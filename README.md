@@ -42,16 +42,18 @@ You can install this package using the **Unity Package Manager** directly from G
 - **Unity UI Toolkit** — Modern, high-performance, and responsive editor UI framework.
 - **C# / ScriptableObjects** — Clean architecture ensuring zero runtime overhead.
 
+## 🖼️ Preview
+
+Here is what the plugin window looks like in the Unity Editor:
+
+<p align="center">
+  <img width="1092" height="457" alt="Simple Asset Collections Window" src="https://github.com/user-attachments/assets/57d76f58-1115-42b5-bffd-560549d83d99" />
+</p>
+
 ## 🤝 Contributing
 
 Contributions, issues, and feature requests are warmly welcomed!  
 Feel free to check the [Issues page](https://github.com/saltario/simple-asset-collections/issues) if you want to contribute.
-
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
 
 ## 📝 License
 
