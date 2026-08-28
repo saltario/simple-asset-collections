@@ -1,0 +1,17 @@
+{
+  "name": "com.saltario.simpleassetcollections",
+  "version": "1.0.0",
+  "displayName": "Simple Asset Collections",
+  "description": "A lightweight, customisable window for Unity to organise and manage your project assets into color-coded collections with quick previews.",
+  "unity": "6000.0",
+  "author": {
+    "name": "Vadim Shaulsii"
+  },
+  "keywords": [
+    "utility",
+    "workflow",
+    "assets",
+    "collections",
+    "organization"
+  ]
+}
