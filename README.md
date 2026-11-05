@@ -15,10 +15,13 @@ Stop getting lost in deep project folders. Keep your working assets right at you
 
 Unity projects grow fast, and finding that *one* material, prefab, or texture you're currently working on can slow you down. **Simple Asset Collections** acts as your personal project workspace:
 - 🎨 **Color-Coded Groups:** Categorize assets visually with custom collection colors.
-- ⚡ **Seamless Drag & Drop:** Drop assets from your Project window instantly, or move them between collections.
+- ⚡ **Seamless Drag & Drop:** Drop assets or folders from your Project window, or move assets between collections.
+- 🔄 **Folder Sync:** Link a collection to a folder and sync newly added or removed assets without duplicates.
 - 🔍 **Built-in Inspector Preview:** Inspect selected assets or view interactive 3D previews directly inside the tool window.
 - 📐 **Adaptive Grid:** Scale icon sizes smoothly with a responsive layout built on **Unity UI Toolkit**.
-- ⌨️ **Workflow Friendly:** Full support for multi-selection, batch removal, and context menus.
+- ⌨️ **Workflow Friendly:** Shift/Ctrl/Cmd multi-selection, batch removal, and context menus.
+- 🧹 **Reference Cleanup:** Missing asset references are visible and can be removed in one click.
+- 🧩 **Prefab Editing:** Double-click a prefab to open it in Prefab Mode.
 
 ## 📦 Installation
 
@@ -34,8 +37,11 @@ You can install this package using the **Unity Package Manager** directly from G
 1. Open the tool via the top menu: **Window > Asset Collections**.
 2. Click the **`+ Collection`** button on the left panel to create your first group.
 3. **Drag and Drop** any assets (Prefabs, Materials, Scripts, Textures, etc.) from your Project window into the items grid.
-4. Click an item to preview it, or **Double-Click** to open its property editor.
-5. Select items and press **`Delete`** or **`Backspace`** to remove them from the collection.
+4. Click an item to preview it. Use **Shift-click** for a range or **Ctrl/Cmd-click** to toggle individual items.
+5. Press **`Delete`** or **`Backspace`**, or right-click and choose **Remove from collection**, to remove the selection.
+6. Double-click a prefab to open the whole prefab in Prefab Mode. Use **Clear missing** to remove broken asset references.
+7. Double-click a collection's color strip to change its color.
+8. Drop a folder onto a collection to link and import it, or onto **+ Collection** or an empty area of the collection list to create a folder-backed collection. Press **Sync** on a linked collection after changing its folder contents.
 
 ## 🛠️ Built With
 

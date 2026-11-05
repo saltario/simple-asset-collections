@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.UIElements;
 using Toggle = UnityEngine.UIElements.Toggle;
@@ -17,6 +18,7 @@ public class SimpleAssetCollectionWindow : EditorWindow
     private ScrollView itemsScrollView;
     private Slider iconSizeSlider;
     private Toggle showPreviewToggle;
+    private Button clearMissingButton;
 
     private TwoPaneSplitView mainSplitView;
     private TwoPaneSplitView rightSplitView;
@@ -32,6 +34,38 @@ public class SimpleAssetCollectionWindow : EditorWindow
     private HashSet<Object> selectedObjects = new HashSet<Object>();
     private Object lastSelectedObject;
     private HashSet<int> pendingPreviewInstanceIDs = new HashSet<int>();
+
+    private sealed class CollectionColorPopup : PopupWindowContent
+    {
+        private readonly SimpleAssetCollectionData collection;
+        private readonly VisualElement colorBar;
+
+        public CollectionColorPopup(SimpleAssetCollectionData collection, VisualElement colorBar)
+        {
+            this.collection = collection;
+            this.colorBar = colorBar;
+        }
+
+        public override Vector2 GetWindowSize() => new Vector2(230, 40);
+
+        public override void OnGUI(Rect rect)
+        {
+            EditorGUI.BeginChangeCheck();
+            Color color = EditorGUI.ColorField(
+                new Rect(8, 8, rect.width - 16, EditorGUIUtility.singleLineHeight),
+                new GUIContent("Color"),
+                collection.color,
+                false,
+                false,
+                false);
+            if (!EditorGUI.EndChangeCheck()) return;
+
+            collection.color = color;
+            colorBar.style.backgroundColor = new StyleColor(color);
+            EditorUtility.SetDirty(collection);
+            AssetDatabase.SaveAssets();
+        }
+    }
 
     [MenuItem("Window/Asset Collections")]
     public static void ShowWindow()
@@ -123,6 +157,16 @@ public class SimpleAssetCollectionWindow : EditorWindow
     public void CreateGUI()
     {
         VisualElement root = rootVisualElement;
+        root.focusable = true;
+        root.RegisterCallback<KeyDownEvent>(evt =>
+        {
+            if (evt.target is TextField) return;
+            if ((evt.keyCode == KeyCode.Delete || evt.keyCode == KeyCode.Backspace) && selectedObjects.Count > 0)
+            {
+                DeleteSelectedItems();
+                evt.StopPropagation();
+            }
+        });
 
         mainSplitView = new TwoPaneSplitView(0, 200, TwoPaneSplitViewOrientation.Horizontal);
         mainSplitView.style.flexGrow = 1;
@@ -137,10 +181,20 @@ public class SimpleAssetCollectionWindow : EditorWindow
         addCollectionBtn.style.height = 28;
         addCollectionBtn.style.marginBottom = 6;
         addCollectionBtn.style.unityFontStyleAndWeight = FontStyle.Bold;
+        RegisterFolderDropTarget(addCollectionBtn, folderPaths =>
+        {
+            foreach (string folderPath in folderPaths)
+                CreateNewCollection(folderPath);
+        });
         leftPanel.Add(addCollectionBtn);
 
         collectionScrollView = new ScrollView();
         collectionScrollView.style.flexGrow = 1;
+        RegisterFolderDropTarget(collectionScrollView, folderPaths =>
+        {
+            foreach (string folderPath in folderPaths)
+                CreateNewCollection(folderPath);
+        });
         leftPanel.Add(collectionScrollView);
         mainSplitView.Add(leftPanel);
 
@@ -179,6 +233,11 @@ public class SimpleAssetCollectionWindow : EditorWindow
         showPreviewToggle.RegisterValueChangedCallback(evt => { showPreview = evt.newValue; TogglePreviewPanel(showPreview); });
         controlsGroup.Add(showPreviewToggle);
 
+        clearMissingButton = new Button(ClearMissingReferences);
+        clearMissingButton.style.marginLeft = 12;
+        controlsGroup.Add(clearMissingButton);
+        UpdateClearMissingButton();
+
         topBar.Add(controlsGroup);
         centerPanel.Add(topBar);
 
@@ -186,28 +245,17 @@ public class SimpleAssetCollectionWindow : EditorWindow
         itemsScrollView.RegisterCallback<GeometryChangedEvent>(evt => { if (CalculateItemsPerRow()) RefreshItemsGrid(); });
 
         // Прием внешних ассетов и перетаскивание между коллекциями
-        itemsScrollView.RegisterCallback<DragUpdatedEvent>(evt => DragAndDrop.visualMode = DragAndDropVisualMode.Copy);
+        itemsScrollView.RegisterCallback<DragUpdatedEvent>(evt =>
+        {
+            if (selectedCollection != null && DragAndDrop.objectReferences.Length > 0)
+                DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
+        });
         itemsScrollView.RegisterCallback<DragPerformEvent>(evt =>
         {
+            if (selectedCollection == null) return;
             DragAndDrop.AcceptDrag();
-            if (selectedCollection != null)
-            {
-                bool added = false;
-                foreach (var obj in DragAndDrop.objectReferences)
-                {
-                    if (obj != null && !selectedCollection.items.Contains(obj))
-                    {
-                        selectedCollection.items.Add(obj);
-                        added = true;
-                    }
-                }
-                if (added)
-                {
-                    SaveCollection(selectedCollection);
-                    RefreshItemsGrid();
-                    RefreshCollectionsList();
-                }
-            }
+            HandleDropIntoCollection(selectedCollection, DragAndDrop.objectReferences);
+            evt.StopPropagation();
         });
 
         centerPanel.Add(itemsScrollView);
@@ -233,7 +281,8 @@ public class SimpleAssetCollectionWindow : EditorWindow
     private void OnGUI()
     {
         Event e = Event.current;
-        if (e.type == EventType.KeyDown && (e.keyCode == KeyCode.Delete || e.keyCode == KeyCode.Backspace))
+        if (e.type == EventType.KeyDown && !EditorGUIUtility.editingTextField &&
+            (e.keyCode == KeyCode.Delete || e.keyCode == KeyCode.Backspace))
         {
             if (selectedObjects.Count > 0)
             {
@@ -270,10 +319,43 @@ public class SimpleAssetCollectionWindow : EditorWindow
             colorBar.style.borderTopRightRadius = 2;
             colorBar.style.borderBottomRightRadius = 2;
             colorBar.style.backgroundColor = new StyleColor(col.color);
+            colorBar.RegisterCallback<MouseDownEvent>(evt =>
+            {
+                if (evt.button != 0 || evt.clickCount != 2) return;
+                UnityEditor.PopupWindow.Show(colorBar.worldBound, new CollectionColorPopup(col, colorBar));
+                evt.StopPropagation();
+            });
             container.Add(colorBar);
 
-            Label label = new Label($"{col.name}  ({col.items.Count})") { style = { flexGrow = 1, unityTextAlign = TextAnchor.MiddleLeft } };
+            Label label = new Label($"{col.name}  ({(col.items == null ? 0 : col.items.Count)})") { style = { flexGrow = 1, unityTextAlign = TextAnchor.MiddleLeft } };
             container.Add(label);
+
+            if (!string.IsNullOrEmpty(col.sourceFolderGuid))
+            {
+                string sourceFolderPath = AssetDatabase.GUIDToAssetPath(col.sourceFolderGuid);
+                Label folderBadge = new Label("DIR");
+                folderBadge.tooltip = string.IsNullOrEmpty(sourceFolderPath)
+                    ? "The source folder is missing."
+                    : sourceFolderPath;
+                folderBadge.style.fontSize = 9;
+                folderBadge.style.marginLeft = 4;
+                folderBadge.style.marginRight = 4;
+                folderBadge.style.paddingLeft = 3;
+                folderBadge.style.paddingRight = 3;
+                folderBadge.style.color = string.IsNullOrEmpty(sourceFolderPath)
+                    ? new Color(1f, 0.55f, 0.45f)
+                    : new Color(0.55f, 0.9f, 0.65f);
+                folderBadge.style.backgroundColor = new Color(0.15f, 0.3f, 0.2f, 0.7f);
+                SetBorderRadius(folderBadge, 3);
+                container.Add(folderBadge);
+
+                Button refreshFolderButton = new Button(() => RefreshFolderCollection(col)) { text = "Sync" };
+                refreshFolderButton.tooltip = $"Refresh contents from {folderBadge.tooltip}";
+                refreshFolderButton.style.width = 40;
+                refreshFolderButton.style.height = 20;
+                refreshFolderButton.style.marginLeft = 2;
+                container.Add(refreshFolderButton);
+            }
 
             // Драг-н-дроп предметов на другую коллекцию в левом списке
             container.RegisterCallback<DragUpdatedEvent>(evt =>
@@ -284,21 +366,8 @@ public class SimpleAssetCollectionWindow : EditorWindow
             container.RegisterCallback<DragPerformEvent>(evt =>
             {
                 DragAndDrop.AcceptDrag();
-                bool modified = false;
-                foreach (var obj in DragAndDrop.objectReferences)
-                {
-                    if (obj != null && !col.items.Contains(obj))
-                    {
-                        col.items.Add(obj);
-                        modified = true;
-                    }
-                }
-                if (modified)
-                {
-                    SaveCollection(col);
-                    RefreshCollectionsList();
-                    if (selectedCollection == col) RefreshItemsGrid();
-                }
+                HandleDropIntoCollection(col, DragAndDrop.objectReferences);
+                evt.StopPropagation();
             });
 
             // Клик выбор / двойной клик переименование
@@ -334,6 +403,7 @@ public class SimpleAssetCollectionWindow : EditorWindow
                     {
                         selectedCollection = col;
                         selectedObjects.Clear();
+                        lastSelectedObject = null;
                         UpdateUnitySelection();
                         RefreshItemsGrid();
                         RefreshCollectionsList();
@@ -350,12 +420,16 @@ public class SimpleAssetCollectionWindow : EditorWindow
                     RefreshCollectionsList();
                 });
                 menu.AddItem(new GUIContent("Delete"), false, () => DeleteCollection(col));
+                if (!string.IsNullOrEmpty(col.sourceFolderGuid))
+                    menu.AddItem(new GUIContent("Stop folder sync"), false, () => StopFolderSync(col));
                 menu.ShowAsContext();
                 evt.StopPropagation();
             });
 
             collectionScrollView.Add(container);
         }
+
+        UpdateClearMissingButton();
     }
 
     private void renameSelectAll(TextField tf)
@@ -381,16 +455,17 @@ public class SimpleAssetCollectionWindow : EditorWindow
     private VisualElement MakeItemCard(Object obj)
     {
         VisualElement itemCard = new VisualElement();
+        itemCard.userData = obj;
         itemCard.style.width = iconSize;
         itemCard.style.height = iconSize + 25;
         SetMargin(itemCard, 3);
         itemCard.style.alignItems = Align.Center;
 
-        if (selectedObjects.Contains(obj))
-        {
-            itemCard.style.backgroundColor = new Color(0.25f, 0.5f, 0.85f, 0.7f);
-            SetBorderRadius(itemCard, 4);
-        }
+        bool isSelected = selectedObjects.Contains(obj);
+        itemCard.style.backgroundColor = isSelected
+            ? new Color(0.25f, 0.5f, 0.85f, 0.7f)
+            : Color.clear;
+        if (isSelected) SetBorderRadius(itemCard, 4);
 
         Image previewImage = new Image { style = { width = iconSize, height = iconSize } };
         Texture2D texture = AssetPreview.GetAssetPreview(obj) ?? AssetPreview.GetMiniThumbnail(obj);
@@ -410,55 +485,176 @@ public class SimpleAssetCollectionWindow : EditorWindow
         nameLabel.tooltip = obj.name;
         itemCard.Add(nameLabel);
 
-        // Поддержка перетаскивания предмета из окна в сцену или другие окна Unity
+        Vector2 dragStartPosition = Vector2.zero;
+        bool dragArmed = false;
+
         itemCard.RegisterCallback<MouseDownEvent>(evt =>
         {
-            if (evt.button == 0)
+            if (evt.button != 0) return;
+            if (evt.clickCount == 2)
             {
-                if (evt.clickCount == 2) { EditorUtility.OpenPropertyEditor(obj); return; }
-
-                if (evt.actionKey)
-                {
-                    if (selectedObjects.Contains(obj)) selectedObjects.Remove(obj);
-                    else selectedObjects.Add(obj);
-                }
-                else
-                {
-                    if (!selectedObjects.Contains(obj))
-                    {
-                        selectedObjects.Clear();
-                        selectedObjects.Add(obj);
-                    }
-                }
-
-                lastSelectedObject = obj;
-                UpdateUnitySelection();
-                RefreshItemsGrid();
+                dragArmed = false;
+                OpenItem(obj);
+                evt.StopPropagation();
+                return;
             }
+
+            SelectItem(obj, evt.shiftKey, evt.actionKey);
+            dragStartPosition = evt.mousePosition;
+            dragArmed = true;
+            itemCard.CaptureMouse();
+            evt.StopPropagation();
         });
 
-        // Начало DragAndDrop с карточки (чтобы тащить на сцену или в иерархию)
+        itemCard.RegisterCallback<MouseUpEvent>(evt =>
+        {
+            dragArmed = false;
+            if (itemCard.HasMouseCapture()) itemCard.ReleaseMouse();
+        });
         itemCard.RegisterCallback<MouseMoveEvent>(evt =>
         {
-            if ((evt.pressedButtons & 1) != 0 && selectedObjects.Count > 0)
-            {
-                DragAndDrop.PrepareStartDrag();
-                DragAndDrop.objectReferences = selectedObjects.ToArray();
-                DragAndDrop.StartDrag("Dragging Collection Items");
-                evt.StopPropagation();
-            }
+            if (!dragArmed || (evt.pressedButtons & 1) == 0 ||
+                (evt.mousePosition - dragStartPosition).sqrMagnitude < 16f)
+                return;
+
+            Object[] draggedObjects = selectedObjects.Where(selected => selected != null).ToArray();
+            if (draggedObjects.Length == 0) return;
+
+            if (itemCard.HasMouseCapture()) itemCard.ReleaseMouse();
+            DragAndDrop.PrepareStartDrag();
+            DragAndDrop.objectReferences = draggedObjects;
+            DragAndDrop.StartDrag("Dragging Collection Items");
+            dragArmed = false;
+            evt.StopPropagation();
         });
 
         itemCard.RegisterCallback<ContextClickEvent>(evt =>
         {
-            if (!selectedObjects.Contains(obj)) { selectedObjects.Clear(); selectedObjects.Add(obj); UpdateUnitySelection(); RefreshItemsGrid(); }
+            if (!selectedObjects.Contains(obj))
+            {
+                selectedObjects.Clear();
+                selectedObjects.Add(obj);
+                lastSelectedObject = obj;
+                UpdateItemSelectionVisuals();
+                UpdateUnitySelection();
+            }
             GenericMenu menu = new GenericMenu();
-            menu.AddItem(new GUIContent($"Remove"), false, DeleteSelectedItems);
+            menu.AddItem(new GUIContent("Remove from collection"), false, DeleteSelectedItems);
             menu.ShowAsContext();
             evt.StopPropagation();
         });
 
         return itemCard;
+    }
+
+    private VisualElement MakeMissingItemCard(int index)
+    {
+        VisualElement itemCard = new VisualElement();
+        itemCard.style.width = iconSize;
+        itemCard.style.height = iconSize + 25;
+        SetMargin(itemCard, 3);
+        itemCard.style.alignItems = Align.Center;
+        itemCard.style.justifyContent = Justify.Center;
+        itemCard.style.backgroundColor = new Color(0.35f, 0.18f, 0.18f, 0.8f);
+        SetBorderRadius(itemCard, 4);
+        itemCard.tooltip = "This asset reference is missing. Use Clear Missing to remove it.";
+
+        Label missingLabel = new Label("Missing\nasset");
+        missingLabel.style.width = iconSize;
+        missingLabel.style.unityTextAlign = TextAnchor.MiddleCenter;
+        missingLabel.style.color = new Color(1f, 0.7f, 0.7f);
+        itemCard.Add(missingLabel);
+        itemCard.Add(new Label($"#{index + 1}") { style = { fontSize = 10 } });
+        return itemCard;
+    }
+
+    private void OpenItem(Object obj)
+    {
+        GameObject gameObject = obj as GameObject;
+        if (gameObject == null && obj is Component component)
+            gameObject = component.gameObject;
+
+        if (gameObject != null && PrefabUtility.IsPartOfPrefabAsset(gameObject))
+        {
+            string prefabPath = PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(gameObject);
+            if (!string.IsNullOrEmpty(prefabPath))
+            {
+                PrefabStageUtility.OpenPrefab(prefabPath);
+                return;
+            }
+        }
+
+        EditorUtility.OpenPropertyEditor(obj);
+    }
+
+    private void SelectItem(Object obj, bool shift, bool actionKey)
+    {
+        List<Object> validItems = selectedCollection.items.Where(item => item != null).ToList();
+        int clickedIndex = validItems.IndexOf(obj);
+        int anchorIndex = lastSelectedObject == null ? -1 : validItems.IndexOf(lastSelectedObject);
+
+        if (shift && clickedIndex >= 0 && anchorIndex >= 0)
+        {
+            if (!actionKey) selectedObjects.Clear();
+            int first = Mathf.Min(clickedIndex, anchorIndex);
+            int last = Mathf.Max(clickedIndex, anchorIndex);
+            for (int i = first; i <= last; i++)
+                selectedObjects.Add(validItems[i]);
+        }
+        else if (actionKey)
+        {
+            if (!selectedObjects.Add(obj))
+                selectedObjects.Remove(obj);
+        }
+        else if (!selectedObjects.Contains(obj))
+        {
+            selectedObjects.Clear();
+            selectedObjects.Add(obj);
+        }
+
+        lastSelectedObject = obj;
+        UpdateItemSelectionVisuals();
+        UpdateUnitySelection();
+    }
+
+    private void UpdateItemSelectionVisuals()
+    {
+        if (itemsScrollView == null) return;
+        foreach (VisualElement row in itemsScrollView.Children())
+        {
+            foreach (VisualElement card in row.Children())
+            {
+                if (!(card.userData is Object item)) continue;
+                bool isSelected = selectedObjects.Contains(item);
+                card.style.backgroundColor = isSelected
+                    ? new Color(0.25f, 0.5f, 0.85f, 0.7f)
+                    : Color.clear;
+                if (isSelected) SetBorderRadius(card, 4);
+            }
+        }
+    }
+
+    private void UpdateClearMissingButton()
+    {
+        if (clearMissingButton == null) return;
+        int missingCount = selectedCollection == null || selectedCollection.items == null
+            ? 0
+            : selectedCollection.items.Count(item => item == null);
+        clearMissingButton.text = $"Clear missing ({missingCount})";
+        clearMissingButton.SetEnabled(missingCount > 0);
+    }
+
+    private void ClearMissingReferences()
+    {
+        if (selectedCollection == null || selectedCollection.items == null) return;
+        int missingCount = selectedCollection.items.Count(item => item == null);
+        if (missingCount == 0) return;
+
+        Undo.RecordObject(selectedCollection, "Clear Missing Collection Items");
+        selectedCollection.items.RemoveAll(item => item == null);
+        SaveCollection(selectedCollection);
+        RefreshItemsGrid();
+        RefreshCollectionsList();
     }
 
     private void TogglePreviewPanel(bool enable)
@@ -500,18 +696,156 @@ public class SimpleAssetCollectionWindow : EditorWindow
         }
     }
 
+    private void RegisterFolderDropTarget(VisualElement target, System.Action<string[]> onFoldersDropped)
+    {
+        target.RegisterCallback<DragUpdatedEvent>(evt =>
+        {
+            if (GetDroppedFolderPaths(DragAndDrop.objectReferences).Length == 0) return;
+            DragAndDrop.visualMode = DragAndDropVisualMode.Copy;
+            evt.StopPropagation();
+        });
+        target.RegisterCallback<DragPerformEvent>(evt =>
+        {
+            string[] folderPaths = GetDroppedFolderPaths(DragAndDrop.objectReferences);
+            if (folderPaths.Length == 0) return;
+
+            DragAndDrop.AcceptDrag();
+            evt.StopPropagation();
+            onFoldersDropped(folderPaths);
+        });
+    }
+
+    private string[] GetDroppedFolderPaths(Object[] objects)
+    {
+        return objects
+            .Where(obj => obj != null)
+            .Select(obj => AssetDatabase.GetAssetPath(obj))
+            .Where(AssetDatabase.IsValidFolder)
+            .Distinct()
+            .ToArray();
+    }
+
+    private void HandleDropIntoCollection(SimpleAssetCollectionData col, Object[] objects)
+    {
+        string[] folderPaths = GetDroppedFolderPaths(objects);
+        if (folderPaths.Length > 1)
+        {
+            EditorUtility.DisplayDialog(
+                "One source folder per collection",
+                "Drop one folder onto a collection. To create several folder collections, drop the folders onto + Collection or the empty area in the collection list.",
+                "OK");
+            return;
+        }
+
+        Undo.RecordObject(col, "Update Asset Collection");
+        bool modified = false;
+        if (folderPaths.Length == 1)
+        {
+            col.sourceFolderGuid = AssetDatabase.AssetPathToGUID(folderPaths[0]);
+            if (!SyncFolderCollectionContents(col)) return;
+            modified = true;
+        }
+
+        foreach (Object obj in objects)
+        {
+            if (obj == null || AssetDatabase.IsValidFolder(AssetDatabase.GetAssetPath(obj))) continue;
+            if (col.items == null) col.items = new List<Object>();
+            if (col.items.Contains(obj)) continue;
+            col.items.Add(obj);
+            modified = true;
+        }
+
+        if (!modified) return;
+        SaveCollection(col);
+        RefreshCollectionsList();
+        if (selectedCollection == col) RefreshItemsGrid();
+    }
+
+    private bool SyncFolderCollectionContents(SimpleAssetCollectionData col)
+    {
+        string folderPath = AssetDatabase.GUIDToAssetPath(col.sourceFolderGuid);
+        if (!AssetDatabase.IsValidFolder(folderPath))
+        {
+            EditorUtility.DisplayDialog(
+                "Source folder not found",
+                "The linked folder is missing. Relink a folder by dragging it onto this collection.",
+                "OK");
+            return false;
+        }
+
+        List<Object> importedItems = new List<Object>();
+        foreach (string guid in AssetDatabase.FindAssets(string.Empty, new[] { folderPath }))
+        {
+            string assetPath = AssetDatabase.GUIDToAssetPath(guid);
+            if (AssetDatabase.IsValidFolder(assetPath)) continue;
+
+            Object asset = AssetDatabase.LoadMainAssetAtPath(assetPath);
+            if (asset != null && !(asset is SimpleAssetCollectionData) && !importedItems.Contains(asset))
+                importedItems.Add(asset);
+        }
+
+        List<Object> previousFolderItems = col.folderItems ?? new List<Object>();
+        List<Object> updatedItems = (col.items ?? new List<Object>())
+            .Where(item => item == null || !previousFolderItems.Contains(item))
+            .ToList();
+
+        col.folderItems = importedItems;
+        foreach (Object item in importedItems)
+        {
+            if (!updatedItems.Contains(item))
+                updatedItems.Add(item);
+        }
+        col.items = updatedItems;
+        return true;
+    }
+
+    private void RefreshFolderCollection(SimpleAssetCollectionData col)
+    {
+        if (col == null || string.IsNullOrEmpty(col.sourceFolderGuid)) return;
+        Undo.RecordObject(col, "Refresh Collection from Folder");
+        if (!SyncFolderCollectionContents(col)) return;
+
+        SaveCollection(col);
+        RefreshCollectionsList();
+        if (selectedCollection == col) RefreshItemsGrid();
+    }
+
+    private void StopFolderSync(SimpleAssetCollectionData col)
+    {
+        Undo.RecordObject(col, "Stop Collection Folder Sync");
+        col.sourceFolderGuid = string.Empty;
+        col.folderItems = new List<Object>();
+        SaveCollection(col);
+        RefreshCollectionsList();
+    }
+
     private void CreateNewCollection()
     {
-        var newCol = CreateInstance<SimpleAssetCollectionData>();
-        newCol.name = $"Collection {collections.Count + 1}";
-        newCol.color = Random.ColorHSV(0f, 1f, 0.7f, 1f, 0.7f, 1f);
+        CreateNewCollection(null);
+    }
 
-        string path = AssetDatabase.GenerateUniqueAssetPath($"{FOLDER_PATH}/NewCol.asset");
+    private void CreateNewCollection(string sourceFolderPath)
+    {
+        bool hasSourceFolder = !string.IsNullOrEmpty(sourceFolderPath);
+        string collectionName = hasSourceFolder ? Path.GetFileName(sourceFolderPath) : $"Collection {collections.Count + 1}";
+        var newCol = CreateInstance<SimpleAssetCollectionData>();
+        newCol.name = collectionName;
+        newCol.color = Random.ColorHSV(0f, 1f, 0.7f, 1f, 0.7f, 1f);
+        if (hasSourceFolder)
+            newCol.sourceFolderGuid = AssetDatabase.AssetPathToGUID(sourceFolderPath);
+
+        string assetName = hasSourceFolder ? collectionName : "NewCol";
+        string path = AssetDatabase.GenerateUniqueAssetPath($"{FOLDER_PATH}/{assetName}.asset");
         AssetDatabase.CreateAsset(newCol, path);
+        if (hasSourceFolder)
+            SyncFolderCollectionContents(newCol);
         AssetDatabase.SaveAssets();
 
         collections.Add(newCol);
         selectedCollection = newCol;
+        selectedObjects.Clear();
+        lastSelectedObject = null;
+        UpdateUnitySelection();
         RefreshCollectionsList();
         RefreshItemsGrid();
     }
@@ -525,6 +859,8 @@ public class SimpleAssetCollectionWindow : EditorWindow
             collections.Remove(col);
             selectedCollection = collections.Count > 0 ? collections[0] : null;
             selectedObjects.Clear();
+            lastSelectedObject = null;
+            UpdateUnitySelection();
             RefreshCollectionsList();
             RefreshItemsGrid();
         }
@@ -534,6 +870,7 @@ public class SimpleAssetCollectionWindow : EditorWindow
     {
         if (itemsScrollView == null) return;
         itemsScrollView.Clear();
+        UpdateClearMissingButton();
         if (selectedCollection == null || selectedCollection.items == null || selectedCollection.items.Count == 0) return;
 
         int totalItems = selectedCollection.items.Count;
@@ -548,7 +885,7 @@ public class SimpleAssetCollectionWindow : EditorWindow
                 if (index >= totalItems) break;
 
                 Object obj = selectedCollection.items[index];
-                if (obj != null) row.Add(MakeItemCard(obj));
+                row.Add(obj != null ? MakeItemCard(obj) : MakeMissingItemCard(index));
             }
             itemsScrollView.Add(row);
         }
@@ -556,6 +893,7 @@ public class SimpleAssetCollectionWindow : EditorWindow
 
     private void UpdateUnitySelection()
     {
+        selectedObjects.RemoveWhere(item => item == null);
         Selection.objects = selectedObjects.ToArray();
         Focus();
         UpdatePreviewWindow();
@@ -564,8 +902,10 @@ public class SimpleAssetCollectionWindow : EditorWindow
     private void DeleteSelectedItems()
     {
         if (selectedObjects.Count == 0 || selectedCollection == null) return;
+        Undo.RecordObject(selectedCollection, "Remove Items from Collection");
         foreach (var item in selectedObjects) selectedCollection.items.Remove(item);
         selectedObjects.Clear();
+        lastSelectedObject = null;
         UpdateUnitySelection();
         SaveCollection(selectedCollection);
         RefreshItemsGrid();
