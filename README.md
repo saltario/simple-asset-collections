@@ -36,7 +36,7 @@ Organize project assets into custom, color-coded collections and keep frequently
 
 Click **+ Collection** to create an empty collection. Drag assets from the Project window into the collection's item grid, or drag assets onto a collection in the list.
 
-Double-click the color strip beside a collection to change its color. Double-click the collection name to rename it.
+Double-click the color strip beside a collection to change its color. Double-click a collection or use **Rename** in its context menu to rename it; the `.asset` filename is updated to match.
 
 ### Link folders and sync
 

@@ -405,27 +405,7 @@ public class SimpleAssetCollectionWindow : EditorWindow
                 {
                     if (evt.clickCount == 2)
                     {
-                        // Переименование коллекции при двойном клике
-                        container.Clear();
-                        TextField renameField = new TextField { value = col.name, style = { flexGrow = 1, height = 20 } };
-                        renameField.RegisterCallback<KeyDownEvent>(ke =>
-                        {
-                            if (ke.keyCode == KeyCode.Return || ke.keyCode == KeyCode.KeypadEnter)
-                            {
-                                col.name = string.IsNullOrEmpty(renameField.value) ? "Unnamed" : renameField.value;
-                                SaveCollection(col);
-                                RefreshCollectionsList();
-                            }
-                        });
-                        renameField.RegisterCallback<FocusOutEvent>(fe =>
-                        {
-                            col.name = string.IsNullOrEmpty(renameField.value) ? "Unnamed" : renameField.value;
-                            SaveCollection(col);
-                            RefreshCollectionsList();
-                        });
-                        container.Add(renameField);
-                        renameField.Focus();
-                        renameSelectAll(renameField);
+                        BeginRenameCollection(col, container);
                     }
                     else
                     {
@@ -443,10 +423,7 @@ public class SimpleAssetCollectionWindow : EditorWindow
             container.RegisterCallback<ContextClickEvent>(evt =>
             {
                 GenericMenu menu = new GenericMenu();
-                menu.AddItem(new GUIContent("Rename"), false, () => {
-                    // Переименование через контекстное меню
-                    RefreshCollectionsList();
-                });
+                menu.AddItem(new GUIContent("Rename"), false, () => BeginRenameCollection(col, container));
                 menu.AddItem(new GUIContent("Delete"), false, () => DeleteCollection(col));
                 if (col.sourceFolderGuids != null && col.sourceFolderGuids.Count > 0)
                 {
@@ -472,6 +449,66 @@ public class SimpleAssetCollectionWindow : EditorWindow
         }
 
         UpdateClearMissingButton();
+    }
+
+    private void BeginRenameCollection(SimpleAssetCollectionData col, VisualElement container)
+    {
+        container.Clear();
+        TextField renameField = new TextField { value = col.name, style = { flexGrow = 1, height = 20 } };
+        bool renameCompleted = false;
+
+        System.Action commitRename = () =>
+        {
+            if (renameCompleted) return;
+            renameCompleted = true;
+            if (!RenameCollectionAsset(col, renameField.value))
+            {
+                RefreshCollectionsList();
+                return;
+            }
+            RefreshCollectionsList();
+        };
+
+        renameField.RegisterCallback<KeyDownEvent>(evt =>
+        {
+            if (evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter)
+            {
+                commitRename();
+                evt.StopPropagation();
+            }
+            else if (evt.keyCode == KeyCode.Escape)
+            {
+                renameCompleted = true;
+                RefreshCollectionsList();
+                evt.StopPropagation();
+            }
+        });
+        renameField.RegisterCallback<FocusOutEvent>(evt => commitRename());
+        container.Add(renameField);
+        renameField.Focus();
+        renameSelectAll(renameField);
+    }
+
+    private bool RenameCollectionAsset(SimpleAssetCollectionData col, string requestedName)
+    {
+        string newName = string.IsNullOrWhiteSpace(requestedName) ? "Unnamed" : requestedName.Trim();
+        string assetPath = AssetDatabase.GetAssetPath(col);
+        if (string.IsNullOrEmpty(assetPath))
+        {
+            EditorUtility.DisplayDialog("Rename failed", "The collection is not saved as an asset.", "OK");
+            return false;
+        }
+
+        string error = AssetDatabase.RenameAsset(assetPath, newName);
+        if (!string.IsNullOrEmpty(error))
+        {
+            EditorUtility.DisplayDialog("Rename failed", error, "OK");
+            return false;
+        }
+
+        col.name = newName;
+        SaveCollection(col);
+        return true;
     }
 
     private void renameSelectAll(TextField tf)
