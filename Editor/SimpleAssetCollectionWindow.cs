@@ -125,12 +125,20 @@ public class SimpleAssetCollectionWindow : EditorWindow
 
         collections.Clear();
         string[] guids = AssetDatabase.FindAssets("t:SimpleAssetCollectionData", new[] { FOLDER_PATH });
+        bool migratedCollections = false;
         foreach (var guid in guids)
         {
             string path = AssetDatabase.GUIDToAssetPath(guid);
             var col = AssetDatabase.LoadAssetAtPath<SimpleAssetCollectionData>(path);
-            if (col != null) collections.Add(col);
+            if (col == null) continue;
+            if (MigrateCollectionData(col))
+            {
+                EditorUtility.SetDirty(col);
+                migratedCollections = true;
+            }
+            collections.Add(col);
         }
+        if (migratedCollections) AssetDatabase.SaveAssets();
 
         if (collections.Count > 0)
         {
@@ -143,6 +151,37 @@ public class SimpleAssetCollectionWindow : EditorWindow
         {
             selectedCollection = null;
         }
+    }
+
+    private bool MigrateCollectionData(SimpleAssetCollectionData col)
+    {
+        if (col.folderSourceVersion >= 1)
+        {
+            bool changed = false;
+            if (col.sourceFolderGuids == null) { col.sourceFolderGuids = new List<string>(); changed = true; }
+            if (col.manualItems == null) { col.manualItems = new List<Object>(); changed = true; }
+            if (col.folderItems == null) { col.folderItems = new List<Object>(); changed = true; }
+            if (col.items == null) { col.items = new List<Object>(); changed = true; }
+            return changed;
+        }
+
+        col.sourceFolderGuids = col.sourceFolderGuids ?? new List<string>();
+        col.folderItems = col.folderItems ?? new List<Object>();
+        col.items = col.items ?? new List<Object>();
+        col.manualItems = new List<Object>();
+
+        if (!string.IsNullOrEmpty(col.sourceFolderGuid) && !col.sourceFolderGuids.Contains(col.sourceFolderGuid))
+            col.sourceFolderGuids.Add(col.sourceFolderGuid);
+
+        foreach (Object item in col.items)
+        {
+            if (item == null || !col.folderItems.Contains(item))
+                col.manualItems.Add(item);
+        }
+
+        col.sourceFolderGuid = string.Empty;
+        col.folderSourceVersion = 1;
+        return true;
     }
 
     private void SaveCollection(SimpleAssetCollectionData col)
@@ -181,20 +220,12 @@ public class SimpleAssetCollectionWindow : EditorWindow
         addCollectionBtn.style.height = 28;
         addCollectionBtn.style.marginBottom = 6;
         addCollectionBtn.style.unityFontStyleAndWeight = FontStyle.Bold;
-        RegisterFolderDropTarget(addCollectionBtn, folderPaths =>
-        {
-            foreach (string folderPath in folderPaths)
-                CreateNewCollection(folderPath);
-        });
+        RegisterFolderDropTarget(addCollectionBtn, CreateNewCollectionFromFolders);
         leftPanel.Add(addCollectionBtn);
 
         collectionScrollView = new ScrollView();
         collectionScrollView.style.flexGrow = 1;
-        RegisterFolderDropTarget(collectionScrollView, folderPaths =>
-        {
-            foreach (string folderPath in folderPaths)
-                CreateNewCollection(folderPath);
-        });
+        RegisterFolderDropTarget(collectionScrollView, CreateNewCollectionFromFolders);
         leftPanel.Add(collectionScrollView);
         mainSplitView.Add(leftPanel);
 
@@ -330,19 +361,16 @@ public class SimpleAssetCollectionWindow : EditorWindow
             Label label = new Label($"{col.name}  ({(col.items == null ? 0 : col.items.Count)})") { style = { flexGrow = 1, unityTextAlign = TextAnchor.MiddleLeft } };
             container.Add(label);
 
-            if (!string.IsNullOrEmpty(col.sourceFolderGuid))
+            if (col.sourceFolderGuids != null && col.sourceFolderGuids.Count > 0)
             {
-                string sourceFolderPath = AssetDatabase.GUIDToAssetPath(col.sourceFolderGuid);
-                Label folderBadge = new Label("DIR");
-                folderBadge.tooltip = string.IsNullOrEmpty(sourceFolderPath)
-                    ? "The source folder is missing."
-                    : sourceFolderPath;
+                Label folderBadge = new Label($"DIR {col.sourceFolderGuids.Count}");
+                folderBadge.tooltip = GetFolderSourceTooltip(col);
                 folderBadge.style.fontSize = 9;
                 folderBadge.style.marginLeft = 4;
                 folderBadge.style.marginRight = 4;
                 folderBadge.style.paddingLeft = 3;
                 folderBadge.style.paddingRight = 3;
-                folderBadge.style.color = string.IsNullOrEmpty(sourceFolderPath)
+                folderBadge.style.color = col.sourceFolderGuids.Any(guid => string.IsNullOrEmpty(AssetDatabase.GUIDToAssetPath(guid)))
                     ? new Color(1f, 0.55f, 0.45f)
                     : new Color(0.55f, 0.9f, 0.65f);
                 folderBadge.style.backgroundColor = new Color(0.15f, 0.3f, 0.2f, 0.7f);
@@ -420,8 +448,22 @@ public class SimpleAssetCollectionWindow : EditorWindow
                     RefreshCollectionsList();
                 });
                 menu.AddItem(new GUIContent("Delete"), false, () => DeleteCollection(col));
-                if (!string.IsNullOrEmpty(col.sourceFolderGuid))
-                    menu.AddItem(new GUIContent("Stop folder sync"), false, () => StopFolderSync(col));
+                if (col.sourceFolderGuids != null && col.sourceFolderGuids.Count > 0)
+                {
+                    menu.AddItem(new GUIContent("Folder sources/Stop all"), false, () => StopFolderSync(col));
+                    menu.AddSeparator("Folder sources/");
+                    foreach (string folderGuid in col.sourceFolderGuids.ToArray())
+                    {
+                        string folderPath = AssetDatabase.GUIDToAssetPath(folderGuid);
+                        string folderLabel = string.IsNullOrEmpty(folderPath)
+                            ? $"Missing ({folderGuid})"
+                            : folderPath.Replace('/', '\\');
+                        menu.AddItem(
+                            new GUIContent($"Folder sources/Remove {folderLabel}"),
+                            false,
+                            () => RemoveFolderSource(col, folderGuid));
+                    }
+                }
                 menu.ShowAsContext();
                 evt.StopPropagation();
             });
@@ -652,6 +694,10 @@ public class SimpleAssetCollectionWindow : EditorWindow
 
         Undo.RecordObject(selectedCollection, "Clear Missing Collection Items");
         selectedCollection.items.RemoveAll(item => item == null);
+        if (selectedCollection.manualItems != null)
+            selectedCollection.manualItems.RemoveAll(item => item == null);
+        if (selectedCollection.folderItems != null)
+            selectedCollection.folderItems.RemoveAll(item => item == null);
         SaveCollection(selectedCollection);
         RefreshItemsGrid();
         RefreshCollectionsList();
@@ -725,23 +771,30 @@ public class SimpleAssetCollectionWindow : EditorWindow
             .ToArray();
     }
 
+    private string GetFolderSourceTooltip(SimpleAssetCollectionData col)
+    {
+        return string.Join("\n", col.sourceFolderGuids.Select(guid =>
+        {
+            string path = AssetDatabase.GUIDToAssetPath(guid);
+            return string.IsNullOrEmpty(path) ? $"Missing folder ({guid})" : path;
+        }).ToArray());
+    }
+
     private void HandleDropIntoCollection(SimpleAssetCollectionData col, Object[] objects)
     {
         string[] folderPaths = GetDroppedFolderPaths(objects);
-        if (folderPaths.Length > 1)
-        {
-            EditorUtility.DisplayDialog(
-                "One source folder per collection",
-                "Drop one folder onto a collection. To create several folder collections, drop the folders onto + Collection or the empty area in the collection list.",
-                "OK");
-            return;
-        }
-
         Undo.RecordObject(col, "Update Asset Collection");
         bool modified = false;
-        if (folderPaths.Length == 1)
+        if (col.sourceFolderGuids == null)
+            col.sourceFolderGuids = new List<string>();
+        if (folderPaths.Length > 0)
         {
-            col.sourceFolderGuid = AssetDatabase.AssetPathToGUID(folderPaths[0]);
+            foreach (string folderPath in folderPaths)
+            {
+                string folderGuid = AssetDatabase.AssetPathToGUID(folderPath);
+                if (!col.sourceFolderGuids.Contains(folderGuid))
+                    col.sourceFolderGuids.Add(folderGuid);
+            }
             if (!SyncFolderCollectionContents(col)) return;
             modified = true;
         }
@@ -749,13 +802,14 @@ public class SimpleAssetCollectionWindow : EditorWindow
         foreach (Object obj in objects)
         {
             if (obj == null || AssetDatabase.IsValidFolder(AssetDatabase.GetAssetPath(obj))) continue;
-            if (col.items == null) col.items = new List<Object>();
-            if (col.items.Contains(obj)) continue;
-            col.items.Add(obj);
+            if (col.manualItems == null) col.manualItems = new List<Object>();
+            if (col.manualItems.Contains(obj)) continue;
+            col.manualItems.Add(obj);
             modified = true;
         }
 
         if (!modified) return;
+        RebuildCollectionItems(col);
         SaveCollection(col);
         RefreshCollectionsList();
         if (selectedCollection == col) RefreshItemsGrid();
@@ -763,18 +817,31 @@ public class SimpleAssetCollectionWindow : EditorWindow
 
     private bool SyncFolderCollectionContents(SimpleAssetCollectionData col)
     {
-        string folderPath = AssetDatabase.GUIDToAssetPath(col.sourceFolderGuid);
-        if (!AssetDatabase.IsValidFolder(folderPath))
+        if (col.sourceFolderGuids == null)
+            col.sourceFolderGuids = new List<string>();
+        if (col.manualItems == null)
+            col.manualItems = new List<Object>();
+        if (col.sourceFolderGuids.Count == 0)
+        {
+            col.folderItems = new List<Object>();
+            RebuildCollectionItems(col);
+            return true;
+        }
+
+        List<string> folderPaths = col.sourceFolderGuids
+            .Select(AssetDatabase.GUIDToAssetPath)
+            .ToList();
+        if (folderPaths.Any(folderPath => !AssetDatabase.IsValidFolder(folderPath)))
         {
             EditorUtility.DisplayDialog(
                 "Source folder not found",
-                "The linked folder is missing. Relink a folder by dragging it onto this collection.",
+                "One or more linked folders are missing. Remove the missing folder from the collection's Folder sources menu or relink it by dragging the folder onto this collection.",
                 "OK");
             return false;
         }
 
         List<Object> importedItems = new List<Object>();
-        foreach (string guid in AssetDatabase.FindAssets(string.Empty, new[] { folderPath }))
+        foreach (string guid in AssetDatabase.FindAssets(string.Empty, folderPaths.ToArray()))
         {
             string assetPath = AssetDatabase.GUIDToAssetPath(guid);
             if (AssetDatabase.IsValidFolder(assetPath)) continue;
@@ -784,24 +851,33 @@ public class SimpleAssetCollectionWindow : EditorWindow
                 importedItems.Add(asset);
         }
 
-        List<Object> previousFolderItems = col.folderItems ?? new List<Object>();
-        List<Object> updatedItems = (col.items ?? new List<Object>())
-            .Where(item => item == null || !previousFolderItems.Contains(item))
-            .ToList();
-
         col.folderItems = importedItems;
-        foreach (Object item in importedItems)
+        RebuildCollectionItems(col);
+        return true;
+    }
+
+    private void RebuildCollectionItems(SimpleAssetCollectionData col)
+    {
+        if (col.manualItems == null) col.manualItems = new List<Object>();
+        if (col.folderItems == null) col.folderItems = new List<Object>();
+
+        List<Object> updatedItems = new List<Object>();
+        foreach (Object item in col.manualItems)
+        {
+            if (item == null || !updatedItems.Contains(item))
+                updatedItems.Add(item);
+        }
+        foreach (Object item in col.folderItems)
         {
             if (!updatedItems.Contains(item))
                 updatedItems.Add(item);
         }
         col.items = updatedItems;
-        return true;
     }
 
     private void RefreshFolderCollection(SimpleAssetCollectionData col)
     {
-        if (col == null || string.IsNullOrEmpty(col.sourceFolderGuid)) return;
+        if (col == null || col.sourceFolderGuids == null || col.sourceFolderGuids.Count == 0) return;
         Undo.RecordObject(col, "Refresh Collection from Folder");
         if (!SyncFolderCollectionContents(col)) return;
 
@@ -813,26 +889,44 @@ public class SimpleAssetCollectionWindow : EditorWindow
     private void StopFolderSync(SimpleAssetCollectionData col)
     {
         Undo.RecordObject(col, "Stop Collection Folder Sync");
-        col.sourceFolderGuid = string.Empty;
-        col.folderItems = new List<Object>();
+        col.sourceFolderGuids.Clear();
+        SyncFolderCollectionContents(col);
         SaveCollection(col);
         RefreshCollectionsList();
+        if (selectedCollection == col) RefreshItemsGrid();
+    }
+
+    private void RemoveFolderSource(SimpleAssetCollectionData col, string folderGuid)
+    {
+        Undo.RecordObject(col, "Remove Collection Folder Source");
+        if (!col.sourceFolderGuids.Remove(folderGuid)) return;
+        SyncFolderCollectionContents(col);
+        SaveCollection(col);
+        RefreshCollectionsList();
+        if (selectedCollection == col) RefreshItemsGrid();
     }
 
     private void CreateNewCollection()
     {
-        CreateNewCollection(null);
+        CreateNewCollectionFromFolders(new string[0]);
     }
 
-    private void CreateNewCollection(string sourceFolderPath)
+    private void CreateNewCollectionFromFolders(string[] sourceFolderPaths)
     {
-        bool hasSourceFolder = !string.IsNullOrEmpty(sourceFolderPath);
-        string collectionName = hasSourceFolder ? Path.GetFileName(sourceFolderPath) : $"Collection {collections.Count + 1}";
+        List<string> folderPaths = sourceFolderPaths
+            .Where(AssetDatabase.IsValidFolder)
+            .Distinct()
+            .ToList();
+        bool hasSourceFolder = folderPaths.Count > 0;
+        string collectionName = hasSourceFolder
+            ? Path.GetFileName(folderPaths[0]) + (folderPaths.Count > 1 ? $" +{folderPaths.Count - 1}" : string.Empty)
+            : $"Collection {collections.Count + 1}";
         var newCol = CreateInstance<SimpleAssetCollectionData>();
         newCol.name = collectionName;
         newCol.color = Random.ColorHSV(0f, 1f, 0.7f, 1f, 0.7f, 1f);
+        newCol.folderSourceVersion = 1;
         if (hasSourceFolder)
-            newCol.sourceFolderGuid = AssetDatabase.AssetPathToGUID(sourceFolderPath);
+            newCol.sourceFolderGuids = folderPaths.Select(AssetDatabase.AssetPathToGUID).ToList();
 
         string assetName = hasSourceFolder ? collectionName : "NewCol";
         string path = AssetDatabase.GenerateUniqueAssetPath($"{FOLDER_PATH}/{assetName}.asset");
@@ -903,7 +997,12 @@ public class SimpleAssetCollectionWindow : EditorWindow
     {
         if (selectedObjects.Count == 0 || selectedCollection == null) return;
         Undo.RecordObject(selectedCollection, "Remove Items from Collection");
-        foreach (var item in selectedObjects) selectedCollection.items.Remove(item);
+        foreach (var item in selectedObjects)
+        {
+            selectedCollection.items.Remove(item);
+            if (selectedCollection.manualItems != null) selectedCollection.manualItems.Remove(item);
+            if (selectedCollection.folderItems != null) selectedCollection.folderItems.Remove(item);
+        }
         selectedObjects.Clear();
         lastSelectedObject = null;
         UpdateUnitySelection();

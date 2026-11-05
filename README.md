@@ -1,66 +1,79 @@
 <div align="center">
 
-# 🗂️ Simple Asset Collections
+# Simple Asset Collections
 
-**A lightweight, lightning-fast asset organization tool for Unity.**  
-Stop getting lost in deep project folders. Keep your working assets right at your fingertips.
+Organize project assets into custom, color-coded collections and keep frequently used assets close at hand.
 
-[![Unity](https://img.shields.io/badge/Unity-6.0%2B-black?style=for-the-badge&logo=unity&logoColor=white)](https://unity.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg?style=for-the-badge)](https://github.com/saltario/simple-asset-collections/issues)
+[![Unity 6+](https://img.shields.io/badge/Unity-6%2B-black?style=for-the-badge&logo=unity&logoColor=white)](https://unity.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](./LICENSE)
 
 </div>
 
-## ✨ Why Simple Asset Collections?
+## Features
 
-Unity projects grow fast, and finding that *one* material, prefab, or texture you're currently working on can slow you down. **Simple Asset Collections** acts as your personal project workspace:
-- 🎨 **Color-Coded Groups:** Categorize assets visually with custom collection colors.
-- ⚡ **Seamless Drag & Drop:** Drop assets or folders from your Project window, or move assets between collections.
-- 🔄 **Folder Sync:** Link a collection to a folder and sync newly added or removed assets without duplicates.
-- 🔍 **Built-in Inspector Preview:** Inspect selected assets or view interactive 3D previews directly inside the tool window.
-- 📐 **Adaptive Grid:** Scale icon sizes smoothly with a responsive layout built on **Unity UI Toolkit**.
-- ⌨️ **Workflow Friendly:** Shift/Ctrl/Cmd multi-selection, batch removal, and context menus.
-- 🧹 **Reference Cleanup:** Missing asset references are visible and can be removed in one click.
-- 🧩 **Prefab Editing:** Double-click a prefab to open it in Prefab Mode.
+- Organize assets into named collections with custom colors.
+- Drag assets and folders from the Project window into collections.
+- Link multiple folders to a collection and sync their contents without duplicates.
+- Select and remove multiple items at once.
+- Preview assets in the collection window.
+- See broken asset references and clear them in one click.
+- Open prefabs directly in Prefab Mode.
 
-## 📦 Installation
+## Requirements
 
-You can install this package using the **Unity Package Manager** directly from GitHub.
+- Unity 6.0 or newer.
 
-1. Open your Unity project (compatible with **Unity 6+** and newer).
-2. Navigate to **Window > Package Manager**.
-3. Click the **`+`** icon in the top-left corner and select **"Add package from git URL..."**.
-4. Paste the repository link `https://github.com/saltario/simple-asset-collections.git` and click **Add**.
+## Installation
 
-## 🚀 Quick Start
+1. Open **Window > Package Manager**.
+2. Click **+** and choose **Add package from git URL...**.
+3. Enter `https://github.com/saltario/simple-asset-collections.git`.
+4. Open the tool from **Window > Asset Collections**.
 
-1. Open the tool via the top menu: **Window > Asset Collections**.
-2. Click the **`+ Collection`** button on the left panel to create your first group.
-3. **Drag and Drop** any assets (Prefabs, Materials, Scripts, Textures, etc.) from your Project window into the items grid.
-4. Click an item to preview it. Use **Shift-click** for a range or **Ctrl/Cmd-click** to toggle individual items.
-5. Press **`Delete`** or **`Backspace`**, or right-click and choose **Remove from collection**, to remove the selection.
-6. Double-click a prefab to open the whole prefab in Prefab Mode. Use **Clear missing** to remove broken asset references.
-7. Double-click a collection's color strip to change its color.
-8. Drop a folder onto a collection to link and import it, or onto **+ Collection** or an empty area of the collection list to create a folder-backed collection. Press **Sync** on a linked collection after changing its folder contents.
+## Using collections
 
-## 🛠️ Built With
+### Create a collection
 
-- **Unity UI Toolkit** — Modern, high-performance, and responsive editor UI framework.
-- **C# / ScriptableObjects** — Clean architecture ensuring zero runtime overhead.
+Click **+ Collection** to create an empty collection. Drag assets from the Project window into the collection's item grid, or drag assets onto a collection in the list.
 
-## 🖼️ Preview
+Double-click the color strip beside a collection to change its color. Double-click the collection name to rename it.
 
-Here is what the plugin window looks like in the Unity Editor:
+### Link folders and sync
+
+A collection can have multiple source folders:
+
+- Drag one or more folders onto an existing collection to add them as sources.
+- Drag one or more folders onto **+ Collection** or an empty area of the collection list to create one folder-backed collection.
+- Click **Sync** on a linked collection after changing its folders.
+
+Sync scans all linked folders, adds new assets, removes assets no longer found in those folders, and avoids duplicates. Assets added manually remain in the collection. If folders overlap, a shared asset appears only once.
+
+Right-click a linked collection and open **Folder sources** to remove individual folders or stop syncing all folders.
+
+### Select and manage items
+
+- Click an item to select it.
+- **Shift-click** to select a range.
+- **Ctrl-click** (Windows/Linux) or **Cmd-click** (macOS) to toggle individual items.
+- Press **Delete** or **Backspace**, or right-click the selection and choose **Remove from collection**.
+- Click an item to view its preview. Double-click a prefab to open the full prefab in Prefab Mode.
+
+Removing an item that still exists in a linked folder does not remove it from that folder; a later sync will add it back.
+
+### Clear broken references
+
+Missing assets appear as marked placeholders instead of empty spaces. Click **Clear missing** to remove all broken references from the selected collection.
+
+## Preview
 
 <p align="center">
-  <img width="1092" height="457" alt="Simple Asset Collections Window" src="https://github.com/user-attachments/assets/57d76f58-1115-42b5-bffd-560549d83d99" />
+  <img width="1092" height="457" alt="Simple Asset Collections window" src="https://github.com/user-attachments/assets/57d76f58-1115-42b5-bffd-560549d83d99" />
 </p>
 
-## 🤝 Contributing
+## Contributing
 
-Contributions, issues, and feature requests are warmly welcomed!  
-Feel free to check the [Issues page](https://github.com/saltario/simple-asset-collections/issues) if you want to contribute.
+Bug reports and feature requests are welcome on the [GitHub Issues page](https://github.com/saltario/simple-asset-collections/issues).
 
-## 📝 License
+## License
 
-Distributed under the **MIT License**. See `LICENSE` for more information.
+Distributed under the MIT License. See [LICENSE](./LICENSE).
